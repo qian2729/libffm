@@ -533,8 +533,11 @@ shared_ptr<ffm_model> fine_tuning_model(
 #if defined USEOMP
     omp_set_num_threads(old_nr_threads);
 #endif
+    shared_ptr<ffm_model> o_model = 
+        shared_ptr<ffm_model>(old_model,
+            [] (ffm_model *ptr) { ffm_destroy_model(&ptr); });
 
-    return model;
+    return o_model;
 }
 
 // TODO: This function will be merged with train().
