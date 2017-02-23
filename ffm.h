@@ -68,6 +68,7 @@ void ffm_destroy_model(struct ffm_model **model);
 ffm_parameter ffm_get_default_param();
 
 ffm_model* ffm_train_with_validation(struct ffm_problem *Tr, struct ffm_problem *Va, struct ffm_parameter param);
+ffm_model* ffm_fine_tuning_with_validation(struct ffm_problem *Tr, struct ffm_problem *Va, struct ffm_parameter param, ffm_model* old_model);
 
 ffm_model* ffm_train(struct ffm_problem *prob, struct ffm_parameter param);
 

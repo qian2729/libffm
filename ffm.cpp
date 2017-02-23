@@ -206,6 +206,19 @@ void shrink_model(ffm_model &model, ffm_int k_new)
     model.k = k_new;
 }
 
+void expand_model(ffm_model &model, ffm_model &old_model)
+{
+    for(ffm_int j = 0; j < model.n; j++)
+    {
+        for(ffm_int f = 0; f < model.m; f++)
+        {
+            ffm_float *src = old_model.W + ((ffm_long)j*old_model.m+f)*model.k;
+            ffm_float *dst = model.W + ((ffm_long)j*model.m+f)*model.k*2;
+            copy(src, src+model.k, dst);
+        }
+    }
+}
+
 vector<ffm_float> normalize(ffm_problem &prob)
 {
     vector<ffm_float> R(prob.l);
@@ -236,6 +249,158 @@ shared_ptr<ffm_model> train(
 
     shared_ptr<ffm_model> model = 
         shared_ptr<ffm_model>(init_model(tr->n, tr->m, param),
+            [] (ffm_model *ptr) { ffm_destroy_model(&ptr); });
+
+    vector<ffm_float> R_tr, R_va;
+    if(param.normalization)
+    {
+        R_tr = normalize(*tr);
+        if(va != nullptr)
+            R_va = normalize(*va);
+    }
+    else
+    {
+        R_tr = vector<ffm_float>(tr->l, 1);
+        if(va != nullptr)
+            R_va = vector<ffm_float>(va->l, 1);
+    }
+
+    bool auto_stop = param.auto_stop && va != nullptr && va->l != 0;
+
+    ffm_int k_aligned = (ffm_int)ceil((ffm_double)param.k/kALIGN)*kALIGN;
+    ffm_long w_size = (ffm_long)model->n * model->m * k_aligned * 2;
+    vector<ffm_float> prev_W;
+    if(auto_stop)
+        prev_W.assign(w_size, 0);
+    ffm_double best_va_loss = numeric_limits<ffm_double>::max();
+
+    if(!param.quiet)
+    {
+        if(param.auto_stop && (va == nullptr || va->l == 0))
+            cerr << "warning: ignoring auto-stop because there is no validation set" << endl;
+
+        cout.width(4);
+        cout << "iter";
+        cout.width(13);
+        cout << "tr_logloss";
+        if(va != nullptr && va->l != 0)
+        {
+            cout.width(13);
+            cout << "va_logloss";
+        }
+        cout << endl;
+    }
+
+    for(ffm_int iter = 1; iter <= param.nr_iters; iter++)
+    {
+        ffm_double tr_loss = 0;
+        if(param.random)
+            random_shuffle(order.begin(), order.end());
+#if defined USEOMP
+#pragma omp parallel for schedule(static) reduction(+: tr_loss)
+#endif
+        for(ffm_int ii = 0; ii < (ffm_int)order.size(); ii++)
+        {
+            ffm_int i = order[ii];
+
+            ffm_float y = tr->Y[i];
+            
+            ffm_node *begin = &tr->X[tr->P[i]];
+
+            ffm_node *end = &tr->X[tr->P[i+1]];
+
+            ffm_float r = R_tr[i];
+
+            ffm_float t = wTx(begin, end, r, *model);
+
+            ffm_float expnyt = exp(-y*t);
+
+            tr_loss += log(1+expnyt);
+               
+            ffm_float kappa = -y*expnyt/(1+expnyt);
+
+            wTx(begin, end, r, *model, kappa, param.eta, param.lambda, true);
+        }
+
+        if(!param.quiet)
+        {
+            tr_loss /= tr->l;
+
+            cout.width(4);
+            cout << iter;
+            cout.width(13);
+            cout << fixed << setprecision(5) << tr_loss;
+            if(va != nullptr && va->l != 0)
+            {
+                ffm_double va_loss = 0;
+#if defined USEOMP
+#pragma omp parallel for schedule(static) reduction(+:va_loss)
+#endif
+                for(ffm_int i = 0; i < va->l; i++)
+                {
+                    ffm_float y = va->Y[i];
+
+                    ffm_node *begin = &va->X[va->P[i]];
+
+                    ffm_node *end = &va->X[va->P[i+1]];
+
+                    ffm_float r = R_va[i];
+
+                    ffm_float t = wTx(begin, end, r, *model);
+                    
+                    ffm_float expnyt = exp(-y*t);
+
+                    va_loss += log(1+expnyt);
+                }
+                va_loss /= va->l;
+
+                cout.width(13);
+                cout << fixed << setprecision(5) << va_loss;
+
+                if(auto_stop)
+                {
+                    if(va_loss > best_va_loss)
+                    {
+                        memcpy(model->W, prev_W.data(), w_size*sizeof(ffm_float));
+                        cout << endl << "Auto-stop. Use model at " << iter-1 << "th iteration." << endl;
+                        break;
+                    }
+                    else
+                    {
+                        memcpy(prev_W.data(), model->W, w_size*sizeof(ffm_float));
+                        best_va_loss = va_loss; 
+                    }
+                }
+            }
+            cout << endl;
+        }
+    }
+
+    shrink_model(*model, param.k);
+
+#if defined USEOMP
+    omp_set_num_threads(old_nr_threads);
+#endif
+
+    return model;
+}
+
+shared_ptr<ffm_model> fine_tuning_model(
+    ffm_problem *tr, 
+    vector<ffm_int> &order, 
+    ffm_parameter param, 
+    ffm_model* old_model,
+    ffm_problem *va=nullptr)
+{
+#if defined USEOMP
+    ffm_int old_nr_threads = omp_get_num_threads();
+    omp_set_num_threads(param.nr_threads);
+#endif
+
+    ffm_model* i_model = init_model(tr->n, tr->m, param);
+    expand_model(*i_model, *old_model); // set load model weight to new model
+    shared_ptr<ffm_model> model = 
+        shared_ptr<ffm_model>(i_model,
             [] (ffm_model *ptr) { ffm_destroy_model(&ptr); });
 
     vector<ffm_float> R_tr, R_va;
@@ -862,6 +1027,27 @@ ffm_model* ffm_train_with_validation(ffm_problem *tr, ffm_problem *va, ffm_param
         order[i] = i;
 
     shared_ptr<ffm_model> model = train(tr, order, param, va);
+
+    ffm_model *model_ret = new ffm_model;
+
+    model_ret->n = model->n;
+    model_ret->m = model->m;
+    model_ret->k = model->k;
+    model_ret->normalization = model->normalization;
+
+    model_ret->W = model->W;
+    model->W = nullptr;
+
+    return model_ret;
+}
+
+ffm_model* ffm_fine_tuning_with_validation(ffm_problem *tr, ffm_problem *va, ffm_parameter param, ffm_model* old_model)
+{
+    vector<ffm_int> order(tr->l);
+    for(ffm_int i = 0; i < tr->l; i++)
+        order[i] = i;
+
+    shared_ptr<ffm_model> model = fine_tuning_model(tr, order, param, old_model, va);
 
     ffm_model *model_ret = new ffm_model;
 
