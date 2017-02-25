@@ -151,7 +151,6 @@ ffm_float* malloc_aligned_float(ffm_long size)
 ffm_model* init_model(ffm_int n, ffm_int m, ffm_parameter param)
 {
     ffm_int k_aligned = (ffm_int)ceil((ffm_double)param.k/kALIGN)*kALIGN;
-
     ffm_model *model = new ffm_model;
     model->n = n;
     model->k = k_aligned;
@@ -212,9 +211,9 @@ void expand_model(ffm_model &model, ffm_model &old_model)
     {
         for(ffm_int f = 0; f < model.m; f++)
         {
-            ffm_float *src = old_model.W + ((ffm_long)j*old_model.m+f)*model.k;
+            ffm_float *src = old_model.W + ((ffm_long)j*old_model.m+f)*old_model.k;
             ffm_float *dst = model.W + ((ffm_long)j*model.m+f)*model.k*2;
-            copy(src, src+model.k, dst);
+            copy(src, src+old_model.k, dst);
         }
     }
 }
@@ -533,11 +532,11 @@ shared_ptr<ffm_model> fine_tuning_model(
 #if defined USEOMP
     omp_set_num_threads(old_nr_threads);
 #endif
-    shared_ptr<ffm_model> o_model = 
-        shared_ptr<ffm_model>(old_model,
-            [] (ffm_model *ptr) { ffm_destroy_model(&ptr); });
+   // shared_ptr<ffm_model> o_model = 
+   //     shared_ptr<ffm_model>(old_model,
+   //         [] (ffm_model *ptr) { ffm_destroy_model(&ptr); });
 
-    return o_model;
+    return model;
 }
 
 // TODO: This function will be merged with train().
