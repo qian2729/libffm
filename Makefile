@@ -8,12 +8,12 @@ CXXFLAGS += -fopenmp
 all: ffm-train ffm-predict ffm-fine-tuning
 
 ffm-train: ffm-train.cpp ffm.o
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -g -o $@ $^
 
 ffm-predict: ffm-predict.cpp ffm.o
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -g -o $@ $^
 ffm-fine-tuning: ffm-fine-tuning.cpp ffm.o
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -g -o $@ $^
 
 ffm.o: ffm.cpp ffm.h
 	$(CXX) $(CXXFLAGS) $(DFLAG) -c -o $@ $<
